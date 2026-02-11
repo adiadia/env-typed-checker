@@ -1,5 +1,5 @@
 {
-  "name": "env-doctor",
+  "name": "env-typed-checker",
   "version": "0.1.0",
   "description": "Validate and parse environment variables with a tiny, type-safe schema.",
   "license": "MIT",
@@ -32,12 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/adiadia/env-doctor.git"
+    "url": "git+https://github.com/adiadia/env-typed-checker.git"
   },
   "bugs": {
-    "url": "https://github.com/adiadia/env-doctor/issues"
+    "url": "https://github.com/adiadia/env-typed-checker/issues"
   },
-  "homepage": "https://github.com/adiadia/env-doctor#readme",
+  "homepage": "https://github.com/adiadia/env-typed-checker#readme",
   "engines": {
     "node": ">=18"
   },

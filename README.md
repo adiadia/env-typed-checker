@@ -1,8 +1,8 @@
-# env-doctor 🩺
+# env-typed-checker 🩺
 
 A tiny, developer-friendly library to **validate and parse environment variables** using a simple schema.
 
-env-doctor prevents your application from starting with:
+env-typed-checker prevents your application from starting with:
 
 - ❌ missing environment variables  
 - ❌ wrong types (e.g. PORT="abc")  
@@ -26,12 +26,12 @@ env-doctor prevents your application from starting with:
 ## 📦 Installation
 
 ```bash
-npm install env-doctor
+npm install env-typed-checker
 ```
 ### 🚀 Basic Usage
 
 ```ts
-import { envDoctor } from "env-doctor";
+import { envDoctor } from "env-typed-checker";
 
 export const config = envDoctor({
   PORT: "number",
