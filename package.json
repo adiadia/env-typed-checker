@@ -32,12 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-github-username>/env-doctor.git"
+    "url": "git+https://github.com/adiadia/env-doctor.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-github-username>/env-doctor/issues"
+    "url": "https://github.com/adiadia/env-doctor/issues"
   },
-  "homepage": "https://github.com/<your-github-username>/env-doctor#readme",
+  "homepage": "https://github.com/adiadia/env-doctor#readme",
   "engines": {
     "node": ">=18"
   },
