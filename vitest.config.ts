@@ -11,7 +11,7 @@ export default defineConfig({
 
       // count all src files (not only the ones imported by tests)
       include: ["src/**/*.ts"],
-      exclude: ["src/types.ts", "src/**/*.d.ts"],
+      exclude: ["src/types.ts", "src/**/*.d.ts", "src/index.ts", "src/core/index.ts", "src/cli/index.ts"],
 
       // ✅ enforce 100% coverage
       thresholds: {

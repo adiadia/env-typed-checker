@@ -1,17 +1,5 @@
-import * as dotenv from "dotenv";
-import { validateAndParse } from "./validator";
-import type { EnvDoctorOptions, EnvDoctorResult, EnvDoctorSchema } from "./types";
+export { envDoctor } from "./core/envDoctor";
 
 export type { EnvDoctorOptions, EnvDoctorSchema } from "./types";
-export { EnvDoctorError } from "./error";
 
-export function envDoctor<TSchema extends EnvDoctorSchema>(
-  schema: TSchema,
-  options: EnvDoctorOptions = {}
-): EnvDoctorResult<TSchema> {
-  const { loadDotEnv = true, env = process.env } = options;
-
-  if (loadDotEnv) dotenv.config();
-
-  return validateAndParse(schema, env);
-}
+export { EnvDoctorError } from "./errors/EnvDoctorError";
