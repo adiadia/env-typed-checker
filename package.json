@@ -1,6 +1,6 @@
 {
   "name": "env-typed-checker",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Validate and parse environment variables with a tiny, type-safe schema.",
   "license": "MIT",
   "type": "commonjs",
