@@ -21,7 +21,6 @@ It helps your app fail fast when configuration is wrong:
 - Optional values with `?` and `optional: true`
 - Defaults (typed + validated)
 - CLI:
-
   - `check` → validate env
   - `generate` → generate/update `.env` from schema (no overwrite by default)
 - Uses `.env` via `dotenv` (optional)
@@ -57,13 +56,10 @@ export const config = envDoctor({
 
 ### What you get
 
-* PORT → number
-
-* DB_URL → string (validated as URL)
-
-* ADMIN_EMAIL → string (validated as email)
-
-* DEBUG → boolean | undefined (optional)
+* PORT → `number`
+* DB_URL → `string` (validated as URL)
+* ADMIN_EMAIL → `string` (validated as email)
+* DEBUG → `boolean` | `undefined` (optional)
 
 
 ### 🧩 Supported Types
@@ -251,9 +247,7 @@ npx env-typed-checker generate --schema env.schema.json --comment-types
 ### Exit codes
 
 * `0` = OK
-
 * `1` = validation failed
-
 * `2` = CLI usage / unexpected error
 
 ## ✅ CI Example (GitHub Actions)
