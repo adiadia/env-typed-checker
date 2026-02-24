@@ -208,6 +208,108 @@ describe("CLI v2", () => {
     }
   });
 
+  it("check --format github prints annotation lines (exact match) and redacts secrets", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, {
+      PORT: "number",
+      SECRET_TOKEN: { type: "number", secret: true },
+    });
+
+    const cleanupPort = setEnv("PORT", "abc");
+    const cleanupSecret = setEnv("SECRET_TOKEN", "supersecret123");
+    try {
+      const err: string[] = [];
+      const code = runCli(
+        ["check", "--schema", schemaFile, "--no-dotenv", "--format=github"],
+        {
+          log: () => {},
+          error: (m) => err.push(m),
+        },
+      );
+
+      expect(code).toBe(1);
+      expect(err).toEqual([
+        '::error title=ENV validation::PORT: expected number, got "abc"',
+        '::error title=ENV validation::SECRET_TOKEN: expected number, got "<redacted>"',
+      ]);
+    } finally {
+      cleanupPort();
+      cleanupSecret();
+    }
+  });
+
+  it("check --format json prints JSON error output", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, { PORT: "number" });
+
+    const cleanup = setEnv("PORT", "abc");
+    try {
+      const err: string[] = [];
+      const code = runCli(
+        ["check", "--schema", schemaFile, "--no-dotenv", "--format", "json"],
+        {
+          log: () => {},
+          error: (m) => err.push(m),
+        },
+      );
+
+      expect(code).toBe(1);
+      expect(err).toHaveLength(1);
+
+      const parsed = JSON.parse(err[0]);
+      expect(parsed).toEqual({
+        error: "ENV validation failed",
+        issues: [
+          {
+            key: "PORT",
+            kind: "invalid",
+            message: 'expected number, got "abc"',
+          },
+        ],
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("returns code 2 for invalid --format value", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, { PORT: "number?" });
+
+    const err: string[] = [];
+    const code = runCli(
+      ["check", "--schema", schemaFile, "--no-dotenv", "--format", "wat"],
+      {
+        log: () => {},
+        error: (m) => err.push(m),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain("Invalid value for --format");
+  });
+
+  it("returns code 2 for invalid --format=<value> form", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, { PORT: "number?" });
+
+    const err: string[] = [];
+    const code = runCli(
+      ["check", "--schema", schemaFile, "--no-dotenv", "--format=wat"],
+      {
+        log: () => {},
+        error: (m) => err.push(m),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain('Invalid value for --format: "wat"');
+  });
+
   it("ignores unknown flags", () => {
     const dir = tmpDir();
     const schemaFile = path.join(dir, "env.schema.json");
@@ -586,6 +688,314 @@ describe("CLI v2", () => {
     expect(contents).toMatch(
       /#\s*(number\??|enum|regex|string|boolean|json|url|email)/,
     );
+  });
+
+  it("generate --comment-docs prints description/example above each key", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    const outFile = path.join(dir, ".env.example");
+
+    writeJson(schemaFile, {
+      API_KEY: {
+        type: "string",
+        description: "Service API key",
+        example: "sk_test_123",
+      },
+    });
+
+    const code = runCli(
+      [
+        "generate",
+        "--schema",
+        schemaFile,
+        "--out",
+        outFile,
+        "--mode",
+        "create",
+        "--comment-docs",
+        "--example-values",
+      ],
+      { log: () => {}, error: () => {} },
+    );
+
+    expect(code).toBe(0);
+    const contents = fs.readFileSync(outFile, "utf8");
+
+    const d = contents.indexOf("# Service API key");
+    const e = contents.indexOf("# example: sk_test_123");
+    const k = contents.indexOf("API_KEY=sk_test_123");
+    expect(d).toBeGreaterThanOrEqual(0);
+    expect(e).toBeGreaterThan(d);
+    expect(k).toBeGreaterThan(e);
+  });
+
+  it("generate --comment-docs skips missing description/example fields", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    const outFile = path.join(dir, ".env.example");
+
+    writeJson(schemaFile, {
+      API_KEY: { type: "string" },
+    });
+
+    const code = runCli(
+      [
+        "generate",
+        "--schema",
+        schemaFile,
+        "--out",
+        outFile,
+        "--mode",
+        "create",
+        "--comment-docs",
+      ],
+      { log: () => {}, error: () => {} },
+    );
+
+    expect(code).toBe(0);
+    const contents = fs.readFileSync(outFile, "utf8");
+    expect(contents).toContain("API_KEY=");
+    expect(contents).not.toContain("# example:");
+    expect(contents).not.toContain("# API");
+  });
+
+  it("generate --comment-docs ignores blank description/example strings", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    const outFile = path.join(dir, ".env.example");
+
+    writeJson(schemaFile, {
+      API_KEY: { type: "string", description: "   \n ", example: "   " },
+    });
+
+    const code = runCli(
+      [
+        "generate",
+        "--schema",
+        schemaFile,
+        "--out",
+        outFile,
+        "--mode",
+        "create",
+        "--comment-docs",
+      ],
+      { log: () => {}, error: () => {} },
+    );
+
+    expect(code).toBe(0);
+    const contents = fs.readFileSync(outFile, "utf8");
+    expect(contents).toContain("API_KEY=");
+    expect(contents).not.toContain("# example:");
+    expect(contents).not.toContain("\n# \n");
+  });
+
+  it("generate behavior is unchanged without new flags", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    const outFile = path.join(dir, ".env");
+
+    writeJson(schemaFile, {
+      APP_MODE: {
+        type: "string",
+        default: "dev",
+        description: "Current app mode",
+        example: "prod",
+      },
+    });
+
+    const code = runCli(
+      [
+        "generate",
+        "--schema",
+        schemaFile,
+        "--out",
+        outFile,
+        "--mode",
+        "create",
+      ],
+      { log: () => {}, error: () => {} },
+    );
+
+    expect(code).toBe(0);
+    const contents = fs.readFileSync(outFile, "utf8");
+    expect(contents).toContain("APP_MODE=dev");
+    expect(contents).not.toContain("# Current app mode");
+    expect(contents).not.toContain("# example:");
+    expect(contents).not.toContain("APP_MODE=prod");
+  });
+
+  it("check redacts invalid values for secret keys", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+
+    writeJson(schemaFile, {
+      PORT: "number",
+      SECRET_TOKEN: { type: "number", secret: true },
+    });
+
+    const cleanupSecret = setEnv("SECRET_TOKEN", "supersecret123");
+    const cleanupPort = setEnv("PORT", "abc");
+    try {
+      const err: string[] = [];
+      const code = runCli(["check", "--schema", schemaFile, "--no-dotenv"], {
+        log: () => {},
+        error: (m) => err.push(m),
+      });
+
+      expect(code).toBe(1);
+
+      const msg = err.join("\n");
+      expect(msg).toContain('PORT: expected number, got "abc"');
+      expect(msg).toContain('SECRET_TOKEN: expected number, got "<redacted>"');
+      expect(msg).not.toContain("supersecret123");
+    } finally {
+      cleanupSecret();
+      cleanupPort();
+    }
+  });
+
+  it("check redaction fallback masks regex errors without raw values", () => {
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+
+    writeJson(schemaFile, {
+      SECRET_TOKEN: { type: "regex", pattern: "^[0-9]+$", secret: true },
+    });
+
+    const cleanupSecret = setEnv("SECRET_TOKEN", "supersecret123");
+    try {
+      const err: string[] = [];
+      const code = runCli(["check", "--schema", schemaFile, "--no-dotenv"], {
+        log: () => {},
+        error: (m) => err.push(m),
+      });
+
+      expect(code).toBe(1);
+
+      const msg = err.join("\n");
+      expect(msg).toContain('SECRET_TOKEN: invalid value, got "<redacted>"');
+      expect(msg).not.toContain("supersecret123");
+    } finally {
+      cleanupSecret();
+    }
+  });
+
+  it("check handles secret lookup failures safely (isSecretKey catch branch)", async () => {
+    // Ensure fresh module graph so cli.ts imports see our spy reliably
+    await vi.resetModules();
+
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, {
+      SECRET_TOKEN: { type: "number", secret: true },
+    });
+
+    const cleanupSecret = setEnv("SECRET_TOKEN", "supersecret123");
+    try {
+      const primitives = await import("../src/validators/primitives");
+      const original = primitives.normalizeSpec;
+      let calls = 0;
+
+      const spy = vi
+        .spyOn(primitives, "normalizeSpec")
+        .mockImplementation((schemaValue: any) => {
+          calls++;
+          // loadSchema + runner succeed, then secret lookup path throws
+          if (calls >= 3) throw new Error("forced normalize failure");
+          return original(schemaValue);
+        });
+
+      const { runCli: runCliFresh } = await import("../src/cli");
+      const err: string[] = [];
+
+      const code = runCliFresh(["check", "--schema", schemaFile, "--no-dotenv"], {
+        log: () => {},
+        error: (m) => err.push(m),
+      });
+
+      expect(code).toBe(1);
+      // Fallback should avoid crashing; this also proves the catch branch ran.
+      expect(err.join("\n")).toContain('SECRET_TOKEN: expected number, got "supersecret123"');
+
+      spy.mockRestore();
+    } finally {
+      cleanupSecret();
+    }
+  });
+
+  it("check non-EnvDoctorError path returns code 2 (inner catch rethrow branch)", async () => {
+    // Ensure mocked index is used by cli.ts import for this test only
+    await vi.resetModules();
+
+    vi.doMock("../src/index", async () => {
+      const actual = await vi.importActual<typeof import("../src/index")>(
+        "../src/index",
+      );
+      return {
+        ...actual,
+        envDoctor: () => {
+          throw new Error("boom-from-envDoctor");
+        },
+      };
+    });
+
+    const { runCli: runCliFresh } = await import("../src/cli");
+
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, { PORT: "number" });
+
+    const err: string[] = [];
+    const code = runCliFresh(["check", "--schema", schemaFile, "--no-dotenv"], {
+      log: () => {},
+      error: (m) => err.push(m),
+    });
+
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain("boom-from-envDoctor");
+
+    vi.doUnmock("../src/index");
+  });
+
+  it("check handles EnvDoctorError keys missing from schema (secret lookup miss branch)", async () => {
+    await vi.resetModules();
+
+    vi.doMock("../src/index", async () => {
+      const actual = await vi.importActual<typeof import("../src/index")>(
+        "../src/index",
+      );
+      return {
+        ...actual,
+        envDoctor: () => {
+          throw new actual.EnvDoctorError([
+            {
+              key: "MISSING_SCHEMA_KEY",
+              kind: "invalid",
+              message: 'expected number, got "123"',
+            },
+          ]);
+        },
+      };
+    });
+
+    const { runCli: runCliFresh } = await import("../src/cli");
+
+    const dir = tmpDir();
+    const schemaFile = path.join(dir, "env.schema.json");
+    writeJson(schemaFile, { PORT: "number" });
+
+    const err: string[] = [];
+    const code = runCliFresh(["check", "--schema", schemaFile, "--no-dotenv"], {
+      log: () => {},
+      error: (m) => err.push(m),
+    });
+
+    expect(code).toBe(1);
+    expect(err.join("\n")).toContain(
+      'MISSING_SCHEMA_KEY: expected number, got "123"',
+    );
+
+    vi.doUnmock("../src/index");
   });
 
   it("covers loadSchema object spec validation errors (bad enum/regex/primitive)", () => {

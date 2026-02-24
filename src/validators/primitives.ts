@@ -115,12 +115,22 @@ function coerceDefault(kind: EnvBaseType, def: unknown): unknown {
 
 /** Normalized spec used by the runner */
 export type NormalizedSpec =
-  | { kind: EnvBaseType; optional: boolean; defaultValue?: unknown }
+  | {
+      kind: EnvBaseType;
+      optional: boolean;
+      defaultValue?: unknown;
+      description?: string;
+      example?: string;
+      secret: boolean;
+    }
   | {
       kind: "enum";
       optional: boolean;
       values: readonly string[];
       defaultValue?: string;
+      description?: string;
+      example?: string;
+      secret: boolean;
     }
   | {
       kind: "regex";
@@ -128,7 +138,45 @@ export type NormalizedSpec =
       re: RegExp;
       display: string;
       defaultValue?: string;
+      description?: string;
+      example?: string;
+      secret: boolean;
     };
+
+function normalizeMeta(schemaValue: Record<string, unknown>): {
+  description?: string;
+  example?: string;
+  secret: boolean;
+} {
+  let description: string | undefined = undefined;
+  if (hasOwn(schemaValue, "description")) {
+    const d = schemaValue.description;
+    if (d !== undefined && typeof d !== "string") {
+      throw new Error(`"description" must be a string if provided`);
+    }
+    description = d;
+  }
+
+  let example: string | undefined = undefined;
+  if (hasOwn(schemaValue, "example")) {
+    const ex = schemaValue.example;
+    if (ex !== undefined && typeof ex !== "string") {
+      throw new Error(`"example" must be a string if provided`);
+    }
+    example = ex;
+  }
+
+  let secret = false;
+  if (hasOwn(schemaValue, "secret")) {
+    const s = schemaValue.secret;
+    if (s !== undefined && typeof s !== "boolean") {
+      throw new Error(`"secret" must be a boolean if provided`);
+    }
+    secret = s === true;
+  }
+
+  return { description, example, secret };
+}
 
 export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
   // --------------------
@@ -153,7 +201,11 @@ export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
       );
     }
 
-    return { kind: base as EnvBaseType, optional };
+    return {
+      kind: base as EnvBaseType,
+      optional,
+      secret: false,
+    };
   }
 
   // --------------------
@@ -168,6 +220,7 @@ export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
   }
 
   const t = (schemaValue as any).type;
+  const meta = normalizeMeta(schemaValue as Record<string, unknown>);
 
   // --------------------
   // Primitive object spec: { type: "number", optional?: true, default?: ... }
@@ -187,7 +240,12 @@ export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
       ? coerceDefault(t as EnvBaseType, (schemaValue as any).default)
       : undefined;
 
-    return { kind: t as EnvBaseType, optional, defaultValue };
+    return {
+      kind: t as EnvBaseType,
+      optional,
+      defaultValue,
+      ...meta,
+    };
   }
 
   // --------------------
@@ -219,7 +277,13 @@ export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
       defaultValue = def;
     }
 
-    return { kind: "enum", optional, values, defaultValue };
+    return {
+      kind: "enum",
+      optional,
+      values,
+      defaultValue,
+      ...meta,
+    };
   }
 
   // --------------------
@@ -258,7 +322,14 @@ export function normalizeSpec(schemaValue: EnvSchemaValue): NormalizedSpec {
       defaultValue = def;
     }
 
-    return { kind: "regex", optional, re, display, defaultValue };
+    return {
+      kind: "regex",
+      optional,
+      re,
+      display,
+      defaultValue,
+      ...meta,
+    };
   }
 
   throw new Error(

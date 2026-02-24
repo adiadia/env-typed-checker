@@ -1,299 +1,334 @@
-# env-typed-checker 
+# env-typed-checker
 
-Validate and parse environment variables using a tiny schema — with both a **TypeScript/Node API** and a **CLI**.
+Validate and parse environment variables with a small schema, using either:
 
-It helps your app fail fast when configuration is wrong:
+- TypeScript/Node API (`envDoctor`)
+- CLI (`env-typed-checker check` and `generate`)
 
-- ❌ Missing required variables
-- ❌ Wrong types (e.g. `PORT="abc"`)
-- ❌ Invalid URLs / emails / JSON
-- ❌ Values not matching allowed enums or regex patterns
-- ✅ Optional values + defaults
-- ✅ CLI checks for CI + .env generation
+This package helps your app fail fast when config is wrong.
+This README is the complete guide for installing, configuring, and using the package.
 
+## Why use this
 
----
+- Catch missing env vars early
+- Parse types (`number`, `boolean`, `json`) safely
+- Validate `url`, `email`, `enum`, and `regex` values
+- Keep one schema for runtime + CI checks
+- Generate `.env` / `.env.example` from schema
+- Redact secret values in CLI validation output
 
-## ✨ Features
-
-- Simple schema syntax (`"number"`, `"boolean?"`, `"email"` `"url"`, `"json"`, `"string"`)
-- Advanced specs: `enum` and `regex`
-- Optional values with `?` and `optional: true`
-- Defaults (typed + validated)
-- CLI:
-  - `check` → validate env
-  - `generate` → generate/update `.env` from schema (no overwrite by default)
-- Uses `.env` via `dotenv` (optional)
-- Friendly aggregated errors (see everything that’s wrong at once)
-
----
-
-## 📦 Install
+## Install
 
 ```bash
 npm install env-typed-checker
 ```
 
-Or run via npx:
+Or run directly:
 
 ```bash
 npx env-typed-checker --help
 ```
 
-## 🚀 Quick Start (Code)
+Requirements:
+
+- Node.js `>=18`
+
+## Quick start (recommended): one schema for CLI + code
+
+If you are new to this package, start with this pattern.
+
+### 1) Create `env.schema.json`
+
+```json
+{
+  "PORT": { "type": "number", "default": 3000, "description": "HTTP port", "example": "8080" },
+  "DB_URL": { "type": "url", "description": "Primary database URL", "example": "postgres://user:pass@localhost:5432/app", "secret": true },
+  "ADMIN_EMAIL": { "type": "email", "description": "Ops contact email", "example": "ops@example.com" },
+  "DEBUG": "boolean?",
+  "NODE_ENV": { "type": "enum", "values": ["dev", "prod"], "default": "dev" },
+  "SLUG": { "type": "regex", "pattern": "^[a-z0-9-]+$", "flags": "i" },
+  "FEATURE_FLAGS": { "type": "json", "default": { "beta": false } }
+}
+```
+
+### 2) Reuse the same schema in app code
+
+ESM (NodeNext / `"type": "module"`):
+
+```ts
+// src/config.ts
+import { envDoctor, type EnvDoctorSchema } from "env-typed-checker";
+import schema from "../env.schema.json" assert { type: "json" };
+
+export const config = envDoctor(schema as EnvDoctorSchema, {
+  loadDotEnv: true,
+});
+```
+
+CommonJS (or TS compiling to CJS):
+
+```ts
+// src/config.ts
+import { envDoctor, type EnvDoctorSchema } from "env-typed-checker";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const schema = require("../env.schema.json") as EnvDoctorSchema;
+
+export const config = envDoctor(schema, { loadDotEnv: true });
+```
+
+TypeScript JSON import note:
+
+```json
+{
+  "compilerOptions": {
+    "resolveJsonModule": true,
+    "esModuleInterop": true
+  }
+}
+```
+
+### 3) Validate env via CLI
+
+```bash
+npx env-typed-checker check --schema env.schema.json
+```
+
+### 4) Generate `.env.example` from the same schema
+
+```bash
+npx env-typed-checker generate --schema env.schema.json --out .env.example --comment-docs --example-values
+```
+
+Example output:
+
+```env
+# HTTP port
+# example: 8080
+PORT=8080
+
+# Primary database URL
+# example: postgres://user:pass@localhost:5432/app
+DB_URL=postgres://user:pass@localhost:5432/app
+```
+
+### 5) Use in CI (GitHub Actions annotations)
+
+```yml
+- name: Validate env
+  run: npx env-typed-checker check --schema env.schema.json --format github
+```
+
+## API quick reference
 
 ```ts
 import { envDoctor } from "env-typed-checker";
 
-export const config = envDoctor({
-  PORT: "number",
-  DB_URL: "url",
-  ADMIN_EMAIL: "email",
-  DEBUG: "boolean?",
-});
-
+const config = envDoctor(
+  {
+    PORT: "number",
+    DEBUG: "boolean?",
+    NODE_ENV: { type: "enum", values: ["dev", "prod"] },
+  },
+  {
+    loadDotEnv: true,
+    env: process.env,
+  },
+);
 ```
 
-### What you get
+### Parsed output types
 
-* PORT → `number`
-* DB_URL → `string` (validated as URL)
-* ADMIN_EMAIL → `string` (validated as email)
-* DEBUG → `boolean` | `undefined` (optional)
-
-
-### 🧩 Supported Types
-| Type | Description |
+| Schema type | Parsed result |
 | :--- | :--- |
-| **string** | Any string value |
-| **number** | A finite number (automatically parsed from string) |
-| **boolean** | Supports `true` / `false`, `1` / `0`, and `yes` / `no` |
-| **json** | Validates and parses a valid JSON string |
-| **url** | Validates for a properly formatted URL |
-| **email** | Validates for a properly formatted email |
+| `string` | `string` |
+| `number` | `number` |
+| `boolean` | `boolean` |
+| `json` | `unknown` |
+| `url` | `string` |
+| `email` | `string` |
+| `enum` | one of listed values |
+| `regex` | `string` |
 
+## Schema reference
 
-### Optional Values
-Add ? to make a variable optional:
-```ts
-envDoctor({ DEBUG: "boolean?" });
+### Primitive shorthand
+
+```json
+{
+  "PORT": "number",
+  "DEBUG": "boolean?",
+  "DB_URL": "url"
+}
 ```
 
-Or use object-style:
+- Add `?` to mark optional keys.
+- Missing optional keys become `undefined` (unless default exists).
 
-```ts
-envDoctor({
-  DEBUG: { type: "boolean", optional: true },
-});
-```
-Missing optional vars become `undefined` unless you provide a default.
+### Object syntax
 
-### 🎯 Defaults
-Defaults can be provided in object-style specs.
-
-```ts
-import { envDoctor } from "env-typed-checker";
-
-const config = envDoctor({
-  PORT: { type: "number", default: 3000 },
-  DEBUG: { type: "boolean", default: "false" }, // string is allowed (parsed)
-  NODE_ENV: { type: "enum", values: ["dev", "prod"], default: "dev" },
-});
+```json
+{
+  "PORT": { "type": "number", "default": 3000 },
+  "DEBUG": { "type": "boolean", "optional": true },
+  "NODE_ENV": { "type": "enum", "values": ["dev", "prod"] },
+  "SLUG": { "type": "regex", "pattern": "^[a-z0-9-]+$", "flags": "i" }
+}
 ```
 
-### Notes:
+### Defaults
 
-- `number` default: number or string (string will be parsed)
-- `boolean` default: boolean or string (string will be parsed)
-- `url/email` defaults must be strings and must validate
-- `json` defaults can be any JSON-like value
+- `number`: number or numeric string
+- `boolean`: boolean or boolean-like string
+- `url` / `email`: valid strings
+- `json`: any JSON-like value
 
-### ✅ Enum and Regex
+### Metadata fields (object syntax only)
 
-### Enum
-
-```ts
-const config = envDoctor({
-  NODE_ENV: { type: "enum", values: ["dev", "prod"] },
-});
+```json
+{
+  "API_KEY": {
+    "type": "string",
+    "description": "External service token",
+    "example": "sk_test_123",
+    "secret": true
+  }
+}
 ```
 
-### Regex
+- `description?: string` used by `generate --comment-docs`
+- `example?: string` used in comments and optional generation values
+- `secret?: boolean` redacts invalid raw values in CLI `check`
 
-```ts
-const config = envDoctor({
-  SLUG: { type: "regex", pattern: "^[a-z0-9-]+$", flags: "i" },
-});
+If you need metadata for a primitive shorthand key, wrap it in object syntax:
+
+```json
+{
+  "PORT": { "type": "number", "description": "HTTP port" }
+}
 ```
 
-### ⚙️ Options
+### Runtime behavior notes
 
-```ts
-envDoctor(schema, {
-  loadDotEnv: true,   // default: true (loads .env)
-  env: process.env    // default: process.env (override for tests)
-});
+- Empty strings (`""`) are treated as missing values.
+- Validation errors are aggregated and returned together.
+- CLI `check` merges `.env` values over current shell env when dotenv loading is enabled.
+
+## CLI reference
+
+### `check`
+
+```bash
+env-typed-checker check --schema <file> [--env-file <file>] [--no-dotenv] [--format pretty|json|github]
 ```
 
+Flags:
 
-### 🧪 Testing with custom env
+- `--schema <file>` required schema file
+- `--env-file <file>` env file path (default `.env`)
+- `--no-dotenv` validate only current `process.env`
+- `--format pretty|json|github` output style (default `pretty`)
+
+### `check` output formats
+
+`pretty` (default):
+
+```text
+ENV validation failed
+- PORT: expected number, got "abc"
+```
+
+`json`:
+
+```json
+{"error":"ENV validation failed","issues":[{"key":"PORT","kind":"invalid","message":"expected number, got \"abc\""}]}
+```
+
+`github` (for workflow annotations):
+
+```text
+::error title=ENV validation::PORT: expected number, got "abc"
+```
+
+When a key has `secret: true`, CLI output redacts raw invalid values:
+
+```text
+SECRET_TOKEN: expected number, got "<redacted>"
+```
+
+### `generate`
+
+```bash
+env-typed-checker generate --schema <file> [--out <file>] [--mode update|create] [--no-defaults] [--comment-types] [--comment-docs] [--example-values]
+```
+
+Defaults:
+
+- output file: `.env`
+- mode: `update`
+- behavior: append only missing keys
+
+Flags:
+
+- `--out <file>` custom output path
+- `--mode create` fail if file already exists
+- `--mode update` append missing keys only
+- `--no-defaults` write empty values instead of defaults
+- `--comment-types` add inline type comments
+- `--comment-docs` add `description` and `example` comments above keys
+- `--example-values` use schema `example` values as generated values
+
+## Exit codes
+
+- `0` success
+- `1` validation failed
+- `2` CLI usage error or unexpected error
+
+## CI examples
+
+GitHub Actions with annotations:
+
+```yml
+- name: Validate env
+  run: npx env-typed-checker check --schema env.schema.json --format github
+```
+
+With custom env file:
+
+```yml
+- name: Validate env
+  run: npx env-typed-checker check --schema env.schema.json --env-file .env.ci --format github
+```
+
+## Testing with custom env in code
 
 ```ts
 import { envDoctor } from "env-typed-checker";
 
 const cfg = envDoctor(
   { PORT: "number" },
-  { loadDotEnv: false, env: { PORT: "3000" } }
+  { loadDotEnv: false, env: { PORT: "3000" } },
 );
 
 console.log(cfg.PORT); // 3000
 ```
 
-### ❌ Error Example
+## Common mistakes
 
-Given a `.env` like:
+- Missing `--schema` in CLI commands
+- Using shorthand string syntax when you need metadata (`description`, `example`, `secret`)
+- Forgetting `resolveJsonModule` when importing `env.schema.json` in TypeScript
 
-```env
-PORT=abc
-DB_URL=not-a-url
-NODE_ENV=staging
-```
+## Development
 
-```ts
-import { envDoctor } from "env-typed-checker";
-
-envDoctor({
-  PORT: "number",
-  DB_URL: "url"
-  NODE_ENV: { type: "enum", values: ["dev", "prod"] },
-});
-```
-
-### Output:
-
-```ts
-ENV validation failed
-- PORT: expected number, got "abc"
-- DB_URL: expected url, got "not-a-url"
-- NODE_ENV: must be one of [dev, prod]
-```
-All errors are shown together so you can fix them in one go.
-
-# 🖥️ CLI
-
-Validate your environment without writing code — perfect for CI pipelines.
-
-## 1) Create a schema file
-
-`env.schema.json`
-```json
-{
-  "PORT": "number",
-  "DB_URL": "url",
-  "ADMIN_EMAIL": "email",
-  "DEBUG": "boolean?",
-  "NODE_ENV": { "type": "enum", "values": ["dev", "prod"] },
-  "SLUG": { "type": "regex", "pattern": "^[a-z0-9-]+$", "flags": "i" }
-}
-```
-
-## 2) Run the check
-
-```bash
-npx env-typed-checker check --schema env.schema.json
-```
-
-Useful flags
-
-```bash
-# Use a specific env file (instead of .env)
-npx env-typed-checker check --schema env.schema.json --env-file .env.production
-
-# Skip dotenv loading and validate only process.env
-npx env-typed-checker check --schema env.schema.json --no-dotenv
-```
-
-### `generate` — generate or update `.env`
-
-Generate values from schema (writes missing keys; does not overwrite existing values).
-
-```bash
-npx env-typed-checker generate --schema env.schema.json
-```
-### By default:
-
-- output file: .env
-- mode: update
-
-### Flags
-
-```bash
-# Custom output file
-npx env-typed-checker generate --schema env.schema.json --out .env.example
-
-# Create mode: refuse to overwrite an existing file
-npx env-typed-checker generate --schema env.schema.json --out .env --mode=create
-
-# Update mode: append only missing keys (safe)
-npx env-typed-checker generate --schema env.schema.json --out .env --mode=update
-
-# Do not write defaults (leave blank values)
-npx env-typed-checker generate --schema env.schema.json --no-defaults
-
-# Add inline type comments (useful for .env.example)
-npx env-typed-checker generate --schema env.schema.json --comment-types
-```
-
-### Exit codes
-
-* `0` = OK
-* `1` = validation failed
-* `2` = CLI usage / unexpected error
-
-## ✅ CI Example (GitHub Actions)
-
-Add this to your workflow to fail the build if env is invalid:
-
-```yml
-- name: Validate env
-  run: npx env-typed-checker check --schema env.schema.json
-```
-If you use a specific env file in CI:
-
-```yml
-- name: Validate env
-  run: npx env-typed-checker check --schema env.schema.json --env-file .env.ci
-```
-
-## 🛠 Development
-Clone the repo and install:
 ```bash
 npm install
-npm test
-```
-### Common scripts:
-```bash
-npm run build      # build package
-npm run test       # run tests
-npm run typecheck  # TypeScript check
-npm run dev        # watch build
+npm run lint
+npm run typecheck
+npm run test:coverage
+npm run build
 ```
 
-### 🤝 Contributing
-PRs are welcome!
+## License
 
-* Improve docs / examples
-* Add more schema features
-* Improve CLI output formatting
-* Add integrations / templates
-
-
-# 📝 License
 MIT
-
-
----
-
-```yml
-::contentReference[oaicite:0]{index=0}
-```

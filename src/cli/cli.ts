@@ -10,11 +10,19 @@ type Io = {
   error: (msg: string) => void;
 };
 
+type CheckOutputFormat = "pretty" | "json" | "github";
+
+function isCheckOutputFormat(value: unknown): value is CheckOutputFormat {
+  return value === "pretty" || value === "json" || value === "github";
+}
+
 function parseArgs(argv: string[]) {
   const out: {
     cmd?: string;
     schemaPath?: string;
     envFile?: string;
+    checkFormat: CheckOutputFormat;
+    invalidCheckFormat?: string;
     useDotenv: boolean;
 
     // generate options
@@ -22,7 +30,16 @@ function parseArgs(argv: string[]) {
     mode?: "update" | "create";
     useDefaults: boolean;
     commentTypes: boolean;
-  } = { useDotenv: true, useDefaults: true, commentTypes: false };
+    commentDocs: boolean;
+    exampleValues: boolean;
+  } = {
+    checkFormat: "pretty",
+    useDotenv: true,
+    useDefaults: true,
+    commentTypes: false,
+    commentDocs: false,
+    exampleValues: false,
+  };
 
   const [cmd, ...rest] = argv;
   out.cmd = cmd;
@@ -34,6 +51,15 @@ function parseArgs(argv: string[]) {
     else if (a.startsWith("--schema=")) out.schemaPath = a.split("=", 2)[1];
     else if (a === "--env-file") out.envFile = rest[++i];
     else if (a.startsWith("--env-file=")) out.envFile = a.split("=", 2)[1];
+    else if (a === "--format") {
+      const f = rest[++i];
+      if (isCheckOutputFormat(f)) out.checkFormat = f;
+      else out.invalidCheckFormat = String(f);
+    } else if (a.startsWith("--format=")) {
+      const f = a.slice("--format=".length);
+      if (isCheckOutputFormat(f)) out.checkFormat = f;
+      else out.invalidCheckFormat = f;
+    }
     else if (a === "--no-dotenv") out.useDotenv = false;
     // generate flags
     else if (a === "--out") out.outFile = rest[++i];
@@ -46,6 +72,8 @@ function parseArgs(argv: string[]) {
       if (m === "update" || m === "create") out.mode = m;
     } else if (a === "--no-defaults") out.useDefaults = false;
     else if (a === "--comment-types") out.commentTypes = true;
+    else if (a === "--comment-docs") out.commentDocs = true;
+    else if (a === "--example-values") out.exampleValues = true;
   }
 
   return out;
@@ -128,12 +156,37 @@ function formatEnvLine(key: string, value: string, comment?: string): string {
   return comment ? `${key}=${safe} # ${comment}` : `${key}=${safe}`;
 }
 
+function normalizeCommentText(s: string): string {
+  return s
+    .replace(/\r?\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getDocCommentLines(description?: string, example?: string): string[] {
+  const lines: string[] = [];
+
+  if (typeof description === "string") {
+    const d = normalizeCommentText(description);
+    if (d) lines.push(`# ${d}`);
+  }
+
+  if (typeof example === "string") {
+    const ex = normalizeCommentText(example);
+    if (ex) lines.push(`# example: ${ex}`);
+  }
+
+  return lines;
+}
+
 function runGenerate(
   schema: EnvDoctorSchema,
   outPath: string,
   mode: "update" | "create",
   useDefaults: boolean,
   commentTypes: boolean,
+  commentDocs: boolean,
+  exampleValues: boolean,
   io: Io,
 ): number {
   const absOut = path.resolve(process.cwd(), outPath);
@@ -147,43 +200,115 @@ function runGenerate(
   const keys = Object.keys(schema).sort();
 
   const linesToAdd: string[] = [];
+  let addedVars = 0;
 
   for (const key of keys) {
     if (existing[key] !== undefined) continue; // do not overwrite existing values (even empty)
 
     const spec = schema[key];
+    const ns = normalizeSpec(spec);
     const typeLabel = commentTypes ? getTypeLabel(spec) : undefined;
 
     let val = "";
 
-    if (useDefaults) {
-      const ns = normalizeSpec(spec);
+    if (exampleValues && ns.example !== undefined) {
+      val = ns.example;
+    } else if (useDefaults) {
       if (ns.defaultValue !== undefined) {
         val = defaultToEnvString(ns.defaultValue);
       }
     }
 
+    if (commentDocs) {
+      linesToAdd.push(...getDocCommentLines(ns.description, ns.example));
+    }
+
     linesToAdd.push(formatEnvLine(key, val, typeLabel));
+    addedVars++;
   }
 
-  if (linesToAdd.length === 0) {
+  if (addedVars === 0) {
     io.log("✅ No missing variables. Nothing to generate.");
     return 0;
   }
 
   if (mode === "create") {
     fs.writeFileSync(absOut, linesToAdd.join("\n") + "\n", "utf8");
-    io.log(`✅ Created ${outPath} with ${linesToAdd.length} variables.`);
+    io.log(`✅ Created ${outPath} with ${addedVars} variables.`);
     return 0;
   }
 
   // update mode: append
   const prefix = fs.existsSync(absOut) ? "\n" : "";
   fs.appendFileSync(absOut, prefix + linesToAdd.join("\n") + "\n", "utf8");
-  io.log(
-    `✅ Updated ${outPath}. Added ${linesToAdd.length} missing variables.`,
-  );
+  io.log(`✅ Updated ${outPath}. Added ${addedVars} missing variables.`);
   return 0;
+}
+
+function redactIssueMessage(message: string): string {
+  const sep = ", got ";
+  const i = message.indexOf(sep);
+  if (i >= 0) {
+    return `${message.slice(0, i)}, got "<redacted>"`;
+  }
+  return `invalid value, got "<redacted>"`;
+}
+
+function isSecretKey(schema: EnvDoctorSchema, key: string): boolean {
+  const spec = schema[key];
+  if (spec === undefined) return false;
+
+  try {
+    const ns = normalizeSpec(spec);
+    return ns.secret === true;
+  } catch {
+    return false;
+  }
+}
+
+function getIssueMessage(
+  issue: EnvDoctorError["issues"][number],
+  schema: EnvDoctorSchema,
+): string {
+  const redact = issue.kind === "invalid" && isSecretKey(schema, issue.key);
+  return redact ? redactIssueMessage(issue.message) : issue.message;
+}
+
+function escapeGithubCommandData(value: string): string {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+function escapeGithubCommandProperty(value: string): string {
+  return escapeGithubCommandData(value)
+    .replace(/:/g, "%3A")
+    .replace(/,/g, "%2C");
+}
+
+function formatValidationErrorForCli(
+  err: EnvDoctorError,
+  schema: EnvDoctorSchema,
+  format: CheckOutputFormat,
+): string[] {
+  const issues = err.issues.map((issue) => {
+    const message = getIssueMessage(issue, schema);
+    return { key: issue.key, kind: issue.kind, message };
+  });
+
+  if (format === "github") {
+    const title = escapeGithubCommandProperty("ENV validation");
+    return issues.map(
+      (issue) =>
+        `::error title=${title}::${escapeGithubCommandData(`${issue.key}: ${issue.message}`)}`,
+    );
+  }
+
+  if (format === "json") {
+    return [JSON.stringify({ error: "ENV validation failed", issues })];
+  }
+
+  const header = "ENV validation failed";
+  const lines = issues.map((issue) => `- ${issue.key}: ${issue.message}`);
+  return [[header, ...lines].join("\n")];
 }
 
 // -------- main --------
@@ -193,11 +318,15 @@ export function runCli(argv: string[], io: Io = console): number {
     cmd,
     schemaPath,
     envFile,
+    checkFormat,
+    invalidCheckFormat,
     useDotenv,
     outFile,
     mode,
     useDefaults,
     commentTypes,
+    commentDocs,
+    exampleValues,
   } = parseArgs(argv);
 
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
@@ -206,17 +335,20 @@ export function runCli(argv: string[], io: Io = console): number {
         "env-typed-checker",
         "",
         "Usage:",
-        "  env-typed-checker check --schema <file> [--env-file <file>] [--no-dotenv]",
-        "  env-typed-checker generate --schema <file> [--out <file>] [--mode update|create] [--no-defaults] [--comment-types]",
+        "  env-typed-checker check --schema <file> [--env-file <file>] [--no-dotenv] [--format pretty|json|github]",
+        "  env-typed-checker generate --schema <file> [--out <file>] [--mode update|create] [--no-defaults] [--comment-types] [--comment-docs] [--example-values]",
         "",
         "Options:",
         "  --schema <file>       Path to schema JSON (required)",
         "  --env-file <file>     Env file path (default: .env) [check]",
         "  --no-dotenv           Do not load env file; use process.env only [check]",
+        "  --format <name>       check output format: pretty|json|github (default: pretty) [check]",
         "  --out <file>          Output env file (default: .env) [generate]",
         "  --mode update|create  update appends missing keys; create fails if file exists (default: update)",
         "  --no-defaults         do not write schema defaults; write empty placeholders [generate]",
         "  --comment-types       add inline comments with type info [generate]",
+        "  --comment-docs        add description/example comments above each key [generate]",
+        "  --example-values      use schema example values when generating missing keys [generate]",
         "",
         "Exit codes:",
         "  0 = OK, 1 = validation failed, 2 = CLI error",
@@ -230,12 +362,29 @@ export function runCli(argv: string[], io: Io = console): number {
     return 2;
   }
 
+  if (cmd === "check" && invalidCheckFormat !== undefined) {
+    io.error(
+      `Invalid value for --format: "${invalidCheckFormat}". Expected: pretty, json, github`,
+    );
+    return 2;
+  }
+
   try {
     const schema = loadSchema(schemaPath);
 
     if (cmd === "check") {
       const env = buildEnv(useDotenv, envFile);
-      envDoctor(schema, { loadDotEnv: false, env });
+      try {
+        envDoctor(schema, { loadDotEnv: false, env });
+      } catch (e) {
+        if (e instanceof EnvDoctorError) {
+          for (const line of formatValidationErrorForCli(e, schema, checkFormat)) {
+            io.error(line);
+          }
+          return 1;
+        }
+        throw e;
+      }
       io.log("✅ Environment is valid.");
       return 0;
     }
@@ -243,16 +392,21 @@ export function runCli(argv: string[], io: Io = console): number {
     if (cmd === "generate") {
       const out = outFile ?? ".env";
       const m = mode ?? "update";
-      return runGenerate(schema, out, m, useDefaults, commentTypes, io);
+      return runGenerate(
+        schema,
+        out,
+        m,
+        useDefaults,
+        commentTypes,
+        commentDocs,
+        exampleValues,
+        io,
+      );
     }
 
     io.error(`Unknown command: ${cmd}`);
     return 2;
   } catch (e) {
-    if (e instanceof EnvDoctorError) {
-      io.error(e.message);
-      return 1;
-    }
     io.error(e instanceof Error ? e.message : String(e));
     return 2;
   }
