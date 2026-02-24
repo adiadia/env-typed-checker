@@ -8,25 +8,34 @@ export type EnvBaseType =
 
 export type EnvStringSpec = EnvBaseType | `${EnvBaseType}?`;
 
+export type EnvSpecMeta = {
+  /** Human-readable description used by docs / .env.example generation */
+  description?: string;
+  /** Example string value used by docs / optional generation */
+  example?: string;
+  /** Marks sensitive values (CLI check redacts invalid raw values) */
+  secret?: boolean;
+};
+
 // Object-style specs (for JSON-friendly advanced validators)
 export type EnumSpec<T extends readonly string[] = readonly string[]> = {
   type: "enum";
   values: T;
   optional?: boolean;
-};
+} & EnvSpecMeta;
 
 export type RegexSpec = {
   type: "regex";
   pattern: string;
   flags?: string;
   optional?: boolean;
-};
+} & EnvSpecMeta;
 
 export type PrimitiveObjectSpec = {
   type: EnvBaseType; // "string" | "number" | ...
   optional?: boolean;
   default?: unknown; // default value if missing
-};
+} & EnvSpecMeta;
 
 export type EnvSchemaValue =
   | EnvStringSpec

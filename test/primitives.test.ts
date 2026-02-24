@@ -42,6 +42,43 @@ describe("primitives", () => {
     expect(() => normalizeSpec({} as any)).toThrow(/Unsupported object spec/i);
   });
 
+  it("normalizeSpec accepts metadata on object specs", () => {
+    const p = normalizeSpec({
+      type: "string",
+      description: "API token",
+      example: "token_123",
+      secret: true,
+    } as any);
+    expect(p.kind).toBe("string");
+    expect((p as any).description).toBe("API token");
+    expect((p as any).example).toBe("token_123");
+    expect((p as any).secret).toBe(true);
+
+    const e = normalizeSpec({
+      type: "enum",
+      values: ["dev", "prod"],
+      description: "App mode",
+      example: "dev",
+      secret: false,
+    } as any);
+    expect(e.kind).toBe("enum");
+    expect((e as any).description).toBe("App mode");
+    expect((e as any).example).toBe("dev");
+    expect((e as any).secret).toBe(false);
+  });
+
+  it("normalizeSpec validates metadata field types", () => {
+    expect(() =>
+      normalizeSpec({ type: "string", description: 123 } as any),
+    ).toThrow(/description/i);
+    expect(() => normalizeSpec({ type: "string", example: 123 } as any)).toThrow(
+      /example/i,
+    );
+    expect(() => normalizeSpec({ type: "string", secret: "yes" } as any)).toThrow(
+      /secret/i,
+    );
+  });
+
   it("normalizeSpec enum requires non-empty string values", () => {
     expect(() => normalizeSpec({ type: "enum", values: [] } as any)).toThrow();
     expect(() =>
@@ -91,7 +128,7 @@ describe("primitives", () => {
 
   it("normalizeSpec supports optional string style (number?)", () => {
     const s = normalizeSpec("number?");
-    expect(s).toEqual({ kind: "number", optional: true });
+    expect(s).toEqual({ kind: "number", optional: true, secret: false });
   });
 
   it("normalizeSpec primitive object spec: coerces number default (string -> number)", () => {
